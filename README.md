@@ -33,10 +33,3 @@ The brain of the rover is a microcontroller of the SAMV71 family that controls d
 ## License ##
 
 Rovertito is licensed under the [GNU General Public License, version 3](LICENSE.md).
-
-## Maintainers ##
-
-The software team at Spacebee Technologies is currently comprised of:
-- [Lautaro Mendieta](https://github.com/lautaromendieta)
-- [Rocio Parra](https://github.com/rocio-parra)
-- [Bruno Valdeiglesias](https://github.com/bvaldeiglesias)
