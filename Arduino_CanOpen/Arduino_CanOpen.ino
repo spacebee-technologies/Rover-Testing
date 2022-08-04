@@ -20,7 +20,7 @@ void setup() {
 
 }
 
-uint8_t EPOS4_id=0x01;
+uint8_t EPOS4_id=0x02;
 
 void loop() {
   uint8_t posicion=0;
