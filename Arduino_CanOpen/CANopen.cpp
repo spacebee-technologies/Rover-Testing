@@ -181,8 +181,10 @@ bool CANopen_Read_Dictionary(uint16_t index, uint8_t subindex, uint32_t *data, u
 uint8_t CANopen_init(void){
     state = CANopen_PRE_OPERATIONAL;                                //Cambio estado de la maquina de estado de CANopen
     mcp2515.reset();
-    mcp2515.setBitrate(CAN_500KBPS);
+    mcp2515.setBitrate(CAN_500KBPS, MCP_8MHZ);
     mcp2515.setNormalMode();
+    //mcp2515.setLoopbackMode(); 
+    //mcp2515.setListenOnlyMode();
     if(Boot_up == 1){                                       //Si esta activo el Boot_up
         if(CANopen_BootUp()==false){ return 1; }            //Envio mensaje de inicio y verifico errores
     }
@@ -238,7 +240,8 @@ uint8_t CANopen_SDO_Expedited_Write(uint8_t node_id, uint8_t command, uint16_t i
         }
         
         //Envio mensaje por can
-		canMsg1.can_dlc = 8;
+        canMsg1.can_id=id;
+		    canMsg1.can_dlc = 8;
         for(int i=0; i<8; i++){
           canMsg1.data[i]=message[i];
           }

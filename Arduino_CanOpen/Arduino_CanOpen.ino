@@ -12,7 +12,7 @@
 
 
 void setup() {
- 
+  Serial.begin(115200);
   //Inicializo CANopen
   uint8_t resultado=CANopen_init();
   if (resultado == 0){ Serial.println("CANopen was initialized and is in pre-operational mode"); }
@@ -36,7 +36,7 @@ void loop() {
         Serial.println("Posicion no enviada");    
       }
     }
-  delay(1000);
+  delay(5000);
  /*
   //CANopen
   //verifico si hay mensaje SDO CANopen

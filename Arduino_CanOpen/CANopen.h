@@ -31,7 +31,7 @@
 /*=====================[Definiciones]================================*/
   #define CANopen_nodeid  0x01
   #define CAN_send_timeout     10                             //Tiempo de espera en ms para verificar el envio correcto de mensaje por can
-  #define Boot_up 1                                           //1 Si se quiere enviar mensaje Boot-up luego de pasar al estado pre-operacional  o 0 para desactivar
+  #define Boot_up 0                                           //1 Si se quiere enviar mensaje Boot-up luego de pasar al estado pre-operacional  o 0 para desactivar
 
   #define CANopen_SDO_mode_client 0
   #define CANopen_SDO_mode_server 1
