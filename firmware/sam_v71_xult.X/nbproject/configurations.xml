@@ -215,7 +215,7 @@
       <itemPath>../src/tarea_principal.h</itemPath>
       <itemPath>../src/tarea2.h</itemPath>
       <itemPath>../src/tarea_uart.h</itemPath>
-      <itemPath>../../../../../../../../../Nube/OneDrive - UTN San Francisco/nube/nube/trabajos/SpaceBee/Tito_firmware/firmware/src/mcan_fd_interrupt.h</itemPath>
+      <itemPath>../src/mcan_fd_interrupt.h</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"
@@ -319,7 +319,7 @@
       <itemPath>../src/tarea_principal.c</itemPath>
       <itemPath>../src/tarea2.c</itemPath>
       <itemPath>../src/tarea_uart.c</itemPath>
-      <itemPath>../../../../../../../../../Nube/OneDrive - UTN San Francisco/nube/nube/trabajos/SpaceBee/Tito_firmware/firmware/src/mcan_fd_interrupt.c</itemPath>
+      <itemPath>../src/mcan_fd_interrupt.c</itemPath>
     </logicalFolder>
   </logicalFolder>
   <sourceRootList>
@@ -333,9 +333,9 @@
         <targetDevice>ATSAMV71Q21B</targetDevice>
         <targetHeader></targetHeader>
         <targetPluginBoard></targetPluginBoard>
-        <platformTool>noID</platformTool>
+        <platformTool>EdbgTool</platformTool>
         <languageToolchain>XC32</languageToolchain>
-        <languageToolchainVersion>4.00</languageToolchainVersion>
+        <languageToolchainVersion>4.10</languageToolchainVersion>
         <platform>3</platform>
       </toolsSet>
       <packs>

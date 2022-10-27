@@ -114,6 +114,8 @@ void MCAN1_SleepModeEnter(void);
 void MCAN1_SleepModeExit(void);
 void MCAN1_TxCallbackRegister(MCAN_CALLBACK callback, uintptr_t contextHandle);
 void MCAN1_RxCallbackRegister(MCAN_CALLBACK callback, uintptr_t contextHandle, MCAN_MSG_RX_ATTRIBUTE msgAttr);
+
+void Enable_testmode(uint8_t modo);
 // DOM-IGNORE-BEGIN
 #ifdef __cplusplus  // Provide C++ Compatibility
     }

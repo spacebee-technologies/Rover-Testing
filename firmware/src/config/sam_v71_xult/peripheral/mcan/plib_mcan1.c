@@ -165,6 +165,7 @@ void MCAN1_Initialize(void)
     MCAN1_REGS->MCAN_CCCR = MCAN_CCCR_INIT_ENABLED;
     while ((MCAN1_REGS->MCAN_CCCR & MCAN_CCCR_INIT_Msk) != MCAN_CCCR_INIT_Msk);
 
+    
     /* Set CCE to unlock the configuration registers */
     MCAN1_REGS->MCAN_CCCR |= MCAN_CCCR_CCE_Msk;
 
@@ -190,11 +191,14 @@ void MCAN1_Initialize(void)
 
     /* Timestamp Counter Configuration Register */
     MCAN1_REGS->MCAN_TSCC = MCAN_TSCC_TCP(0) | MCAN_TSCC_TSS_TCP_INC;
-
+    
     /* Set the operation mode */
-    MCAN1_REGS->MCAN_CCCR = MCAN_CCCR_INIT_DISABLED | MCAN_CCCR_FDOE_ENABLED | MCAN_CCCR_BRSE_ENABLED;
+    MCAN1_REGS->MCAN_CCCR = MCAN_CCCR_INIT_DISABLED | MCAN_CCCR_FDOE_ENABLED | MCAN_CCCR_BRSE_ENABLED | MCAN_CCCR_TEST_ENABLED;
+    
+    
     while ((MCAN1_REGS->MCAN_CCCR & MCAN_CCCR_INIT_Msk) == MCAN_CCCR_INIT_Msk);
-
+    
+    
     /* Select interrupt line */
     MCAN1_REGS->MCAN_ILS = 0x0;
 
@@ -203,13 +207,16 @@ void MCAN1_Initialize(void)
 
     /* Enable MCAN interrupts */
     MCAN1_REGS->MCAN_IE = MCAN_IE_BOE_Msk;
-
+    
+    
+    
     // Initialize the MCAN PLib Object
     mcan1Obj.txBufferIndex = 0;
     mcan1Obj.rxBufferIndex1 = 0;
     mcan1Obj.rxBufferIndex2 = 0;
     memset((void *)mcan1RxMsg, 0x00, sizeof(mcan1RxMsg));
     memset((void*)&mcan1Obj.msgRAMConfig, 0x00, sizeof(MCAN_MSG_RAM_CONFIG));
+   
 }
 
 // *****************************************************************************
@@ -484,7 +491,7 @@ MCAN_ERROR MCAN1_ErrorGet(void)
         MCAN1_REGS->MCAN_CCCR = MCAN_CCCR_INIT_DISABLED | MCAN_CCCR_FDOE_ENABLED | MCAN_CCCR_BRSE_ENABLED;
         while ((MCAN1_REGS->MCAN_CCCR & MCAN_CCCR_INIT_Msk) == MCAN_CCCR_INIT_Msk);
     }
-
+    
     return error;
 }
 
@@ -659,6 +666,34 @@ void MCAN1_MessageRAMConfigSet(uint8_t *msgRAMConfigBaseAddress)
 
     /* Complete Message RAM Configuration by clearing MCAN CCCR Init */
     MCAN1_REGS->MCAN_CCCR = MCAN_CCCR_INIT_DISABLED | MCAN_CCCR_FDOE_ENABLED | MCAN_CCCR_BRSE_ENABLED;
+    
+    while ((MCAN1_REGS->MCAN_CCCR & MCAN_CCCR_INIT_Msk) == MCAN_CCCR_INIT_Msk);
+}
+
+// *****************************************************************************
+/* Function:
+    void Enable_testmode(uint8_t modo)
+   Descripcion: Activa el modo test del MCAN1 ya sea en External Loop Back Mode o Internal Loop Back Mode
+   Parametro de entrada:
+                            uint8_t modo:  si esta 1 configura Internal Loop Back Mode  si esta en 0 configura External Loop Back Mode
+   No retorna nada
+*/
+void Enable_testmode(uint8_t modo){
+ /* Set MCAN CCCR Init for Message RAM Configuration */
+    MCAN1_REGS->MCAN_CCCR = MCAN_CCCR_INIT_ENABLED;
+    while ((MCAN1_REGS->MCAN_CCCR & MCAN_CCCR_INIT_Msk) != MCAN_CCCR_INIT_Msk);
+
+    /* Set CCE to unlock the configuration registers */
+    MCAN1_REGS->MCAN_CCCR |= MCAN_CCCR_CCE_Msk;
+    
+    MCAN1_REGS->MCAN_CCCR = MCAN_CCCR_INIT_ENABLED | MCAN_CCCR_FDOE_ENABLED | MCAN_CCCR_BRSE_ENABLED | MCAN_CCCR_TEST_ENABLED;       //Activo modo test y CCR_init
+    
+	MCAN1_REGS->MCAN_TEST |= MCAN_TEST_LBCK_ENABLED;                                                                                 //Activo modo External Loop Back Mode (es necesario tener MCAN_CCCR.TEST en 1 MCAN_CCCR.INIT en 1)
+    if(modo==1){
+        MCAN1_REGS->MCAN_CCCR |= MCAN_CCCR_MON_ENABLED;                                                                              //Configuro modo monitor
+    }
+    //MCAN1_REGS->MCAN_CCCR |= MCAN_CCCR_DAR_NO_AUTO_RETX;                                                                           //Desactiva la retransmicion automatica
+    MCAN1_REGS->MCAN_CCCR = MCAN_CCCR_INIT_DISABLED | MCAN_CCCR_FDOE_ENABLED | MCAN_CCCR_BRSE_ENABLED | MCAN_CCCR_TEST_ENABLED;      //Comnpleta configuracion en modo test limpiando MCAN con CCCR Init 
     while ((MCAN1_REGS->MCAN_CCCR & MCAN_CCCR_INIT_Msk) == MCAN_CCCR_INIT_Msk);
 }
 
