@@ -10,27 +10,14 @@
 /*==================[Definiciones]================================*/
   #ifndef _MCAN_FD_INTERRUPT_H
   #define _MCAN_FD_INTERRUPT_H
-  // DOM-IGNORE-BEGIN
-  #ifdef __cplusplus  // Provide C++ Compatibility
 
-  extern "C" {
-
-  #endif
-  // DOM-IGNORE-END
+  #define debug 1
 
 /*=====================[ Inclusiones ]============================*/
   #include <stddef.h>                     //Define NULL
   #include <stdbool.h>                    //Define true
   #include <stdlib.h>                     //Define EXIT_FAILURE
   #include "definitions.h"                //Prototipos de funciones SYS
-
-/*=================[Prototipos de funciones]======================*/
- void mcan_fd_interrupt_config(uint8_t *msgRAMConfigBaseAddress);
- bool mcan_fd_interrupt_enviar(uint32_t messageID , uint8_t *message, uint8_t messageLength, MCAN_MODE MCAN_MODE_L, MCAN_MSG_TX_ATTRIBUTE MCAN_MSG_ATTR_TX);
- bool mcan_fd_interrupt_recibir(uint32_t *rx_messageID, uint8_t *rx_message, uint8_t *rx_messageLength, uint16_t *timestamp, MCAN_MSG_RX_ATTRIBUTE MCAN_MSG_ATTR_RX, MCAN_MSG_RX_FRAME_ATTRIBUTE *msgFrameAttr);
- uint8_t Resultado(void);
- void mcan_fd_interrupt_habilitar(void);
-
 
 /*=====================[Variables]================================*/
 typedef enum
@@ -41,6 +28,22 @@ typedef enum
         CAN_RECEPCION_ERROR,     //Error al recibir un dato por can bus luego de llamar a la funcion mcan_fd_interrupt_recibir()
         CAN_TRANSMICION_ERROR,   //Error al transmitir un dato por can bus luego de llamar a la funcion mcan_fd_interrupt_enviar()
     } CAN_ESTADO;                //Enumaracion de los estados posibles
+
+typedef enum
+    {
+        MCAN_MODE_NORMAL,              
+        MCAN_MODE_FD_STANDARD,      
+        MCAN_MODE_FD_EXTENDED     
+    } MCAN_MODE;                //Enumaracion de los estados de transmicion de MCAN
+
+      
+/*=================[Prototipos de funciones]======================*/
+ void mcan_fd_interrupt_config(uint8_t *msgRAMConfigBaseAddress);
+ bool mcan_fd_interrupt_enviar(uint32_t messageID , uint8_t *message, uint8_t messageLength, MCAN_MODE MCAN_MODE_L);
+ bool mcan_fd_interrupt_recibir(uint32_t *rx_messageID2, uint8_t *rx_message2, uint8_t *rx_messageLength2);
+ uint8_t Resultado(void);
+ void mcan_fd_interrupt_habilitar(void);
+
 
 //DOM-IGNORE-BEGIN
 #ifdef __cplusplus

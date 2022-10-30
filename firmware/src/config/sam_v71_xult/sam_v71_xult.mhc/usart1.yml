@@ -155,4 +155,4 @@ children:
         children:
         - {type: Value, value: 'true'}
 - type: ElementPosition
-  attributes: {x: '324', y: '90', id: usart1}
+  attributes: {x: '4', y: '164', id: usart1}

@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include "configuration.h"
 
+#define UART_SIN_TAREA 1
 /*=====================[Variables]================================*/
 typedef enum
    {
@@ -36,6 +37,13 @@ typedef struct
 void Uart1_FreeRTOS_Config ( uint8_t prioridad );
 void Uart1_print (const char * mensaje);
 void Uart1_println (const char * mensaje);
-uint8_t Uart1_Recibir (void);
+
+#ifdef UART_TAREA
+    uint8_t Uart1_Recibir (void);
+#endif
+    
+#ifdef UART_SIN_TAREA
+    uint8_t Uart1_Recibir(uint8_t num_bytes, char *dato);
+#endif
 
 #endif /* _TAREA_UART_H */

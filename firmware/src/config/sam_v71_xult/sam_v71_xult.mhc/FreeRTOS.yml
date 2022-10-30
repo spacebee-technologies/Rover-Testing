@@ -4,13 +4,6 @@ attributes: {id: FreeRTOS}
 children:
 - type: Symbols
   children:
-  - type: Combo
-    attributes: {id: FREERTOS_CHECK_FOR_STACK_OVERFLOW}
-    children:
-    - type: Values
-      children:
-      - type: User
-        attributes: {value: Method_1}
   - type: Integer
     attributes: {id: FREERTOS_CPU_CLOCK_HZ}
     children:
@@ -19,11 +12,18 @@ children:
       - type: Dynamic
         attributes: {id: FreeRTOS, value: '300000000'}
   - type: Boolean
-    attributes: {id: FREERTOS_USE_MALLOC_FAILED_HOOK}
+    attributes: {id: FREERTOS_INCLUDE_XSEMAPHOREGETMUTEXHOLDER}
     children:
     - type: Values
       children:
       - type: User
-        attributes: {value: 'false'}
+        attributes: {value: 'true'}
+  - type: Boolean
+    attributes: {id: FREERTOS_USE_RECURSIVE_MUTEXES}
+    children:
+    - type: Values
+      children:
+      - type: User
+        attributes: {value: 'true'}
 - type: ElementPosition
-  attributes: {x: '24', y: '88', id: FreeRTOS}
+  attributes: {x: '341', y: '179', id: FreeRTOS}

@@ -6,15 +6,15 @@
  *
  * Descripcion: Libreria CANopen utilizando preiferico MCAN con libreria mcan_fd_interrupt.c
  *              Soporte SDO en modo Expedited Read y Expedited Write. No soporta lectura y escritura por segmentos.
- *              Proximas mejores: Optimizar diccionario, crear soporte PDO, sincronizacion, SDO abort code, codigos de error.
+ *              Proximas mejores: Optimizar diccionario, crear soporte PDO, sincronizacion, SDO abort code, codigos de error, soporte a boot-up.
  *              Esta libreria funciona para FreeRTOS y esta protegida por un semaforo binario para evitar conflictos ya que can es un recurso compartido.
 *===========================================================================*/
 
 /*=====================[ Inclusiones ]============================*/
   #include "CANopen.h"
   #include "Dictionary.h"
-  #define Boot_up 1     //1 Si se quiere enviar mensaje Boot-up luego de pasar al estado pre-operacional  o 0 para desactivar
-
+  #define Boot_up 0     //1 Si se quiere enviar mensaje Boot-up luego de pasar al estado pre-operacional  o 0 para desactivar
+    //¡¡¡¡IMPORTANTE: BOOT_UP no funciona, manetener en cero!!!!!
 /*=====================[Variables]================================*/
     typedef enum
     {
@@ -30,12 +30,10 @@
 
     //Variables para periferico CAN
     SemaphoreHandle_t canMutexLock;                 //Mutex de semaforo utilizado para proteger el recurso compartido de CAN con otras tareas
-    uint8_t Can1MessageRAM[MCAN1_MESSAGE_RAM_CONFIG_SIZE] __attribute__((aligned (32)))__attribute__((space(data), section (".ram_nocache")));
+    uint8_t Mcan1MessageRAM[MCAN1_MESSAGE_RAM_CONFIG_SIZE] __attribute__((aligned (32)))__attribute__((space(data), section (".ram_nocache")));
     static uint32_t rx_messageID = 0;
     static uint8_t rx_message[64] = {0};
     static uint8_t rx_messageLength = 0;
-    static uint16_t timestamp = 0;
-    static MCAN_MSG_RX_FRAME_ATTRIBUTE msgFrameAttr = MCAN_MSG_RX_DATA_FRAME;
 
 /*========================[Prototipos]=================================*/    
     bool CANopen_BootUp(void);
@@ -51,17 +49,18 @@
                       2 = Error al mandar mensaje Boot_Up
   ========================================================================*/
 uint8_t CANopen_init(void){
-    mcan_fd_interrupt_config(Can1MessageRAM);               //Configuro memoria ram de mensaje can
+    //mcan_fd_interrupt_config(Can1MessageRAM);               //Configuro memoria ram de mensaje can
     canMutexLock = xSemaphoreCreateMutex();                 //Creo semaforo para proteger el recurso compartido de CAN con otras tareas
     if(canMutexLock == NULL)                                //Si no se creo el semaforo
     {
         return 1; /* No habia suficiente almacenamiento dinamico de FreeRTOS disponible para que el semaforo se creara correctamente. */
     }
 
-    mcan_fd_interrupt_config(Can1MessageRAM);               //Configuro memoria ram de mensaje can
+    mcan_fd_interrupt_config(Mcan1MessageRAM);               //Configuro memoria ram de mensaje can
     
     state = CANopen_PRE_OPERATIONAL;                                //Cambio estado de la maquina de estado de CANopen
     if(Boot_up == 1){                                       //Si esta activo el Boot_up
+        Enable_testmode(0);
         if(CANopen_BootUp()==false){ return 2; }            //Envio mensaje de inicio y verifico errores
     }
     return 0;                                               //Retorno OK
@@ -156,7 +155,7 @@ uint8_t CANopen_SDO_Expedited_Write(uint8_t node_id, uint8_t command, uint16_t i
         }
         
         //Envio mensaje por can
-        bool retorno = mcan_fd_interrupt_enviar((uint32_t) id, message, 8, MCAN_MODE_FD_WITH_BRS, MCAN_MSG_ATTR_TX_FIFO_DATA_FRAME); //Envio trama por can bus
+        bool retorno = mcan_fd_interrupt_enviar((uint32_t) id, message, 8, MCAN_MODE_NORMAL); //Envio trama por can bus
         if ( retorno == false){
             return 1;
         }
@@ -168,7 +167,7 @@ uint8_t CANopen_SDO_Expedited_Write(uint8_t node_id, uint8_t command, uint16_t i
         //Si esta en modo cliente, espero respuesta desde el servidor
         if(mode==CANopen_SDO_mode_client){
             //Configuro recepcion de mensaje can
-            bool retorno3 = mcan_fd_interrupt_recibir(&rx_messageID, rx_message, &rx_messageLength, &timestamp, MCAN_MSG_ATTR_RX_BUFFER, &msgFrameAttr);
+            bool retorno3 = mcan_fd_interrupt_recibir(&rx_messageID, rx_message, &rx_messageLength);
             if (retorno3 == false)  
             {
                 xSemaphoreGive(canMutexLock);                      //Libero semaforo
@@ -266,7 +265,7 @@ uint8_t CANopen_SDO_Expedited_Read(uint16_t *index, uint8_t *subindex){
     uint8_t retornar=7;                                             //Inicializo en un valor no utilizado
     if(state==CANopen_PRE_OPERATIONAL || state==CANopen_OPERATIONAL){         //Si el estado del CANopen permite mensajes SDO
         //Configuro recepcion de mensaje can
-        bool retorno = mcan_fd_interrupt_recibir(&rx_messageID, rx_message, &rx_messageLength, &timestamp, MCAN_MSG_ATTR_RX_BUFFER, &msgFrameAttr);
+        bool retorno = mcan_fd_interrupt_recibir(&rx_messageID, rx_message, &rx_messageLength);
         if (retorno == false)  
         {
             xSemaphoreGive(canMutexLock);                               //Libero semaforo
@@ -419,7 +418,7 @@ bool CANopen_BootUp(void){
     xSemaphoreTake(canMutexLock, portMAX_DELAY);                            //Tomo semaforo para proteger el bus can ya que es un recurso compartico con otras tareas
     static uint8_t message[1] = {0}; message[0]=0;
     uint32_t id = 0x700 + CANopen_nodeid;
-    bool retorno = mcan_fd_interrupt_enviar((uint32_t) id, message, 1, MCAN_MODE_FD_WITH_BRS, MCAN_MSG_ATTR_TX_FIFO_DATA_FRAME); //Envio trama por can bus
+    bool retorno = mcan_fd_interrupt_enviar((uint32_t) id, message, 1, MCAN_MODE_NORMAL); //Envio trama por can bus
     if ( retorno == false){
         xSemaphoreGive(canMutexLock);                                        //Libero semaforo
         return false;

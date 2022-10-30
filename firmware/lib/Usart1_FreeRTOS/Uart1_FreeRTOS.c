@@ -1,6 +1,7 @@
 /*=============================================================================
  * Author: Spacebeetech - Navegación
  * Date: 16/05/2022 
+ * Update: 29/10/2022
  * Board: Atmel ARM Cortex-M7 Xplained Ultra Dev Board ATSAMV71-XULT ATSAMV71Q21B
  * Entorno de programacion: MPLABX - Harmony
  *
@@ -10,6 +11,15 @@
  *                 Ademas el iniciarse esta tarea tambien crea un semaforo binario, este semaforo sirve para bloquear o habilitar la tarea dependiendo si hay datos en el buffer para leer o no.
  *                 Luego de iniciar el semaforo y configurar la int de uart, se entra un bucle infinito. Dentro de este bucle se intenta tomar el semaforo, si el semaforo habilita, se leen los datos del buffer uart.
  *                 en caso de que no haya dato en el buffer, el semaforo no estara habilitado por la interrupcion y por ende bloqueara la tarea TAREA_UART_Tasks hasta que llegue el dato uart permitiendo que otras tareas entren en contexto y ejecución.
+ *
+ *                 Para recibir un dato, se debe llemar a la funcion Uart1_Recibir(). Esta funcion retorna el mensaje obtenido por la tarea explicada anteriormente.
+ *                 Para enviar mensaje se puede usar Uart1_print() o Uart1_println()
+ * Funcionamiento sin tarea: La funcion Uart1_FreeRTOS_Config realiza: 
+ *                              -Crea un semaforo para proteger el intercambio de datos con el periferico ya que es un recurso compartido entre diferentes tareas. 
+ *                              -Configura el periferico uart como interrupcion cuando el buffer uart llega a x bytes previamente establecidos.
+ *                           La funcion Uart1_Recibir() configura la recepcion de x bytes por medio de callback y entra a un bucle con timuout esperando la recpcion de loz x bytes.
+ *                             si se recibe datos, estos son enviados al puntero que se especifica en la funcion y la misma retorna true, de lo contrario retorna false.   
+ *                           Las funciones Uart1_print() o Uart1_println()  solo realizan el envio de datos
  *
  *                 Para recibir un dato, se debe llemar a la funcion Uart1_Recibir(). Esta funcion retorna el mensaje obtenido por la tarea explicada anteriormente.
  *                 Para enviar mensaje se puede usar Uart1_print() o Uart1_println()
@@ -27,12 +37,16 @@ void TAREA_UART_Initialize ( void );
 void TAREA_UART_Tasks ( void *pvParameters );
 
 /*=====================[Variables]================================*/
+ static SemaphoreHandle_t Semaforo_uart;            //Mutex de semaforo utilizado para proteger el recurso compartido de UART con otras tareas
+  #ifdef UART_TAREA
+  uint8_t readByte=' ';                              //Variable para guardar el bit recibido por uart
   TaskHandle_t xTAREA_UART_Tasks;                    //Puntero hacia la TAREA_UART_Tasks
   TAREA_UART_DATA tarea_uartData;                    //Estructura que contiene la informacion de la tarea como por ejemplo, el estado de esta
   static SemaphoreHandle_t dataRxSemaphore;          //Variable Mutex para semaforo binario para bloquer tarea uart hasta que se llame a la funcion de interupcion de uart. (uartReadEventHandler)
-  static SemaphoreHandle_t Semaforo_uart;            //Mutex de semaforo utilizado para proteger el recurso compartido de UART con otras tareas
-  uint8_t readByte=' ';                              //Variable para guardar el bit recibido por uart
-    
+  #endif 
+  #ifdef UART_SIN_TAREA
+  uint8_t recibido=0;                                //Variable para idnicar por medio del callback que se recibio un dato
+  #endif 
 /*=====================[Implementaciones]==============================*/
 
 /*========================================================================
@@ -44,8 +58,10 @@ void TAREA_UART_Tasks ( void *pvParameters );
   ========================================================================*/
 void Uart1_FreeRTOS_Config (uint8_t prioridad)
 {
+    #ifdef UART_TAREA
     xTaskCreate((TaskFunction_t) TAREA_UART_Tasks, "TAREA_uart1", 512, NULL, prioridad, &xTAREA_UART_Tasks); //Creo tarea para uart1
     TAREA_UART_Initialize ();                               //Inicializo la maquina de estado del uart1
+    #endif 
     Semaforo_uart = xSemaphoreCreateMutex();                //Creo semaforo para proteger el recurso compartido de UART con otras tareas
     if( Semaforo_uart == NULL)                              //Si no se creo el semaforo
     {
@@ -84,6 +100,81 @@ void Uart1_println (const char * mensaje)
 }
 
 /*========================================================================
+  Funcion: uartReadEventHandler
+  Descripcion: Callback que se llama al ocurrir una recepcio de datos por uart, esta funcion libera el semaforo que desbloquea la tarea uart
+              para poder obtener el dato que se encuentra en el buffer del driver uart.
+  Parametro de entrada: 
+                          USART_EVENT event: tipo de evento del callback
+                          uintptr_t context.
+  No retorna nada
+  ========================================================================*/
+void uartReadEventHandler(USART_EVENT event, uintptr_t context )
+{
+    if (event == USART_EVENT_READ_THRESHOLD_REACHED)                         //UMBRAL DE LECTURA DE EVENTO USART ALCANZADO
+    {
+        #ifdef UART_TAREA
+        BaseType_t xHigherPriorityTaskWoken;                                 //Variable para determinar si luego de la interrupcion se realiza cambio de contexto o no
+
+        xSemaphoreGiveFromISR( dataRxSemaphore, &xHigherPriorityTaskWoken ); //Desbloqueo la tarea uart soltando el semáforo. El semáforo debe haber sido creado previamente
+                                                                             //xSemaphoreGiveFromISR() establecerá *xHigherPriorityTaskWoken en pdTRUE si al proporcionar el semáforo se desbloqueó una tarea y la tarea desbloqueada tiene una prioridad más alta que la tarea que se está ejecutando actualmente. Si xSemaphoreGiveFromISR() establece este valor en pdTRUE, se debe solicitar un cambio de contexto antes de salir de la interrupción.
+        portYIELD_FROM_ISR( xHigherPriorityTaskWoken );                      //Si xHigherPriorityTaskWoken se estableció en verdadero, deberíamos ceder
+                                                                            //Pase el valor xHigherPriorityTaskWoken a portYIELD_FROM_ISR(). Si xHigherPriorityTaskWoken se configuró en pdTRUE dentro de xTimerPendFunctionCallFromISR(), al llamar a portYIELD_FROM_ISR() se solicitará un cambio de contexto. Si xHigherPriorityTaskWoken sigue siendo pdFALSE, llamar a portYIELD_FROM_ISR() no tendrá ningún efecto.
+        #endif 
+
+        #ifdef UART_SIN_TAREA
+        recibido=1;
+        #endif  
+    } 
+}
+
+#ifdef UART_SIN_TAREA
+/*========================================================================
+  Funcion: Uart1_Recibir
+  Descripcion: Recibe x cantidad de bytes del periferico uart y lo almacena
+  Parametro de entrada: 
+                          uint8_t num_bytes: Cantida de bytes que se quieren obtener
+                          char *dato:        Puntero hacia la variable donde se quiere guardar el dato obtenido
+ Retorna                  1:                 Si se pudo obtener el dato
+ *                        2:                 Si no se pudo obtener el dato (timeout)
+  ========================================================================*/
+uint8_t Uart1_Recibir(uint8_t num_bytes, char *dato){
+    xSemaphoreTake(Semaforo_uart, portMAX_DELAY);                              //Tomo semaforo para proteger el envio por uart ya que es un recurso compartico con otras tareas
+    USART1_ReadCallbackRegister(uartReadEventHandler, 0);                      //Se indica la funcion a llamar por interrupcion de uart y el contexto
+    USART1_ReadThresholdSet(num_bytes);                                                //Esta API permite que la aplicación establezca un nivel de umbral en la cantidad de bytes de datos disponibles en el búfer de recepción. Una vez que se alcanza el umbral, se envía una notificación a la aplicación si está habilitada. 
+    USART1_ReadNotificationEnable(true, false);                                //Esta API permite que la aplicación active o desactive la recepción de notificaciones. Además, la aplicación puede optar por recibir notificaciones de forma persistente hasta que la condición del umbral sea verdadera. Por ejemplo, si el umbral de recepción se establece en 5, se envía una notificación cuando el búfer de recepción interno tiene 5 bytes. Si la notificación persistente está desactivada, la aplicación recibe una notificación solo una vez cuando hay 5 bytes sin leer en el búfer de recepción. Sin embargo, si la notificación persistente está activada, la aplicación recibe una notificación cada vez que se recibe un byte y el búfer de recepción tiene 5 o más caracteres sin leer. En este caso, la notificación se detendrá cuando la aplicación lea los datos del búfer de recepción y el número de bytes que se generan en el búfer de recepción sea inferior a 5.
+                                                                               //bool USART1_ReadNotificationEnable(bool isEnabled, bool isPersistent)
+    uint8_t contador=0;                                                        //Variable para timeout
+    uint8_t retorno=0;                                                         //Variable para retornar valor
+    while(recibido==0){                                                        //Espero a recibir dato por el callback
+        if(contador>20){                                                       //Si supero tiempo timeout                    
+            retorno=2;                                                         //Retorno desborde timeout
+            break;                                                             //Salgo del while
+        }else{                                                                 //Sino
+            vTaskDelay(10 / portTICK_PERIOD_MS );                              //Espero un tiempo
+            contador++;                                                        //Incremento timeout
+        }
+    }
+    recibido=0;                                                                //Reinicio variable
+    if(retorno==0){                                                            //Si no desbordo el timeout (recibi dato)
+        
+        USART1_Read(dato, num_bytes);                                         //Obtengo el dato del buffer del periferico y lo almacena en la variable readByte
+        //Uart1_println(dato);
+        //Uart1_println((uint8_t*)dato);
+        //USART1_Write(&dato, 1);                        //Escribo 1 byte por uart
+        retorno=1;
+    }else{                                                                     //Si desbordo timeout, debuelvo valo vacio
+        for(uint8_t i=0; i<num_bytes; i++){
+            dato[i]=' ';
+        }
+    }
+    xSemaphoreGive(Semaforo_uart);                                             //Libero semaforo
+    return retorno;
+}
+#endif
+
+
+#ifdef UART_TAREA
+/*========================================================================
   Funcion: Uart1_Recibir
   Descripcion: Envia una cadena de texto por el uart1
   Sin parametro de entrada
@@ -101,28 +192,6 @@ uint8_t Uart1_Recibir (void)
 }
 
 /*========================================================================
-  Funcion: uartReadEventHandler
-  Descripcion: Callback que se llama al ocurrir una recepcio de datos por uart, esta funcion libera el semaforo que desbloquea la tarea uart
-              para poder obtener el dato que se encuentra en el buffer del driver uart.
-  Parametro de entrada: 
-                          USART_EVENT event: tipo de evento del callback
-                          uintptr_t context.
-  No retorna nada
-  ========================================================================*/
-void uartReadEventHandler(USART_EVENT event, uintptr_t context )
-{
-    if (event == USART_EVENT_READ_THRESHOLD_REACHED)                         //UMBRAL DE LECTURA DE EVENTO USART ALCANZADO
-    {
-        BaseType_t xHigherPriorityTaskWoken;                                 //Variable para determinar si luego de la interrupcion se realiza cambio de contexto o no
-
-        xSemaphoreGiveFromISR( dataRxSemaphore, &xHigherPriorityTaskWoken ); //Desbloqueo la tarea uart soltando el semáforo. El semáforo debe haber sido creado previamente
-                                                                              //xSemaphoreGiveFromISR() establecerá *xHigherPriorityTaskWoken en pdTRUE si al proporcionar el semáforo se desbloqueó una tarea y la tarea desbloqueada tiene una prioridad más alta que la tarea que se está ejecutando actualmente. Si xSemaphoreGiveFromISR() establece este valor en pdTRUE, se debe solicitar un cambio de contexto antes de salir de la interrupción.
-        portYIELD_FROM_ISR( xHigherPriorityTaskWoken );                      //Si xHigherPriorityTaskWoken se estableció en verdadero, deberíamos ceder
-                                                                              //Pase el valor xHigherPriorityTaskWoken a portYIELD_FROM_ISR(). Si xHigherPriorityTaskWoken se configuró en pdTRUE dentro de xTimerPendFunctionCallFromISR(), al llamar a portYIELD_FROM_ISR() se solicitará un cambio de contexto. Si xHigherPriorityTaskWoken sigue siendo pdFALSE, llamar a portYIELD_FROM_ISR() no tendrá ningún efecto.
-    } 
-}
-
-/*========================================================================
   Funcion: TAREA_UART_Initialize
   Descripcion: inicia la maquina de estado de la tarea uart
   Sin parametro de entrada
@@ -132,6 +201,11 @@ void TAREA_UART_Initialize ( void )
 {
     tarea_uartData.state = TAREA_UART_STATE_INIT; //Se inicia la maquina de estado mediante su estructura. Se establece en 1
 }
+
+
+
+
+
 
 /*========================================================================
   Funcion: TAREA_UART_Tasks
@@ -158,7 +232,7 @@ void TAREA_UART_Tasks ( void *pvParameters )
 
     while (status == true)                                                    //Fin de la configuracion y bucle infinito
     {
-        /* Block until a character is received on the terminal */
+        // Block until a character is received on the terminal
         if( xSemaphoreTake( dataRxSemaphore, portMAX_DELAY ) == pdTRUE )     //Bloquea esta tarea hasta recibir en numero de bytes configurados en el uart
         {
             portENTER_CRITICAL();                                            //Seccion critica para evitar que se ejecute cambio de contexto alterando el proceso de guardado de la variable
@@ -167,3 +241,4 @@ void TAREA_UART_Tasks ( void *pvParameters )
         }
     }
 }
+#endif

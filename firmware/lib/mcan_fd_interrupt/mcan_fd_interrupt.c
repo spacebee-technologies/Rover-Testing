@@ -1,7 +1,7 @@
 /*=============================================================================
  * Author: Spacebeetech - Navegacion
  * Date: 16/05/2022 
- * Update: 19/05/2022
+ * Update: 29/10/2022
  * Board: Atmel ARM Cortex-M7 Xplained Ultra Dev Board ATSAMV71-XULT ATSAMV71Q21B
  * Entorno de programacion: MPLABX - Harmony
  *
@@ -21,6 +21,11 @@
   #include <stdlib.h>                       //Define EXIT_FAILURE
   #include <stdio.h>                        //Para sizeof
   #include "definitions.h"                  //Prototipos de funciones SYS
+  #include "../Usart1_FreeRTOS/Uart1_FreeRTOS.h"
+
+  /* Standard identifier id[28:18]*/
+  #define WRITE_ID(id) (id << 18)
+  #define READ_ID(id)  (id >> 18)
 
 /*=====================[Variables]================================*/
     typedef enum
@@ -32,58 +37,326 @@
         APP_STATE_MCAN_XFER_ERROR,          //Estado mensaje recibido o transmitido erroneamente
         APP_STATE_MCAN_USER_INPUT           //Esperando al usuario para enviar o recibir mensaje
     } APP_STATES;                           //Enumaracion de los estados posibles
-
+    
+    /* Variable to save Tx/Rx transfer status and context */
+    static uint32_t status = 0;
     static uint32_t xferContext = 0;        //Contexto global de can
+    
     volatile static APP_STATES state = APP_STATE_MCAN_USER_INPUT; //Variable para guardar el estado de la aplicaciÃ³n
+    static uint8_t txFiFo[MCAN1_TX_FIFO_BUFFER_SIZE];
+    static uint8_t rxFiFo0[MCAN1_RX_FIFO0_SIZE];
+    static uint8_t rxFiFo1[MCAN1_RX_FIFO1_SIZE];
+    static uint8_t rxBuffer[MCAN1_RX_BUFFER_SIZE];
+
+    static uint32_t rx_messageID = 0;
+    static uint8_t rx_message[64] = {0};
+    static uint8_t rx_messageLength = 0;
+    static uint16_t timestamp = 0;
 
 /*========================[Prototipos]=================================*/    
-
 
  
 /*=====================[Implementaciones]==============================*/
 
-/*========================================================================
-  Funcion: APP_MCAN_Callback
-  Descripcion: Envia mensaje por canbus
-  Parametro de entrada:
-                        uintptr_t context:
-   No retorna nada
-  ========================================================================*/
-void APP_MCAN_Callback(uintptr_t context)
+
+/* Message Length to Data length code */
+static uint8_t MCANLengthToDlcGet(uint8_t length)
 {
-    xferContext = context;                                  //Valorizo el contexto global
-    uint32_t status = MCAN1_ErrorGet();                     //Comprueba el estado de MCAN
-    if (((status & MCAN_PSR_LEC_Msk) == MCAN_ERROR_NONE) || ((status & MCAN_PSR_LEC_Msk) == MCAN_PSR_LEC_NO_CHANGE))    //Si no hay error can o si no hay cambio can
+    uint8_t dlc = 0;
+
+    if (length <= 8U)
     {
-        switch ((APP_STATES)context)                        //Segun el contexto:
-        {
-            case APP_STATE_MCAN_RECEIVE:
-            case APP_STATE_MCAN_TRANSMIT:                   //Si el contexto del callback es por transmicion o recepcion de can
-            {
-                state = APP_STATE_MCAN_XFER_SUCCESSFUL;     //Estado mensaje recibido o transmitido correctamente
-                break;                                      //Salgo de switch
-            }
-            default:                                        //En cualquier otro contexto
-                break;                                      //Salgo de switch
-        }
+        dlc = length;
     }
-    else                                                    //
+    else if (length <= 12U)
     {
-        state = APP_STATE_MCAN_XFER_ERROR;                  //Estado mensaje recibido o transmitido erroneamente
+        dlc = 0x9U;
+    }
+    else if (length <= 16U)
+    {
+        dlc = 0xAU;
+    }
+    else if (length <= 20U)
+    {
+        dlc = 0xBU;
+    }
+    else if (length <= 24U)
+    {
+        dlc = 0xCU;
+    }
+    else if (length <= 32U)
+    {
+        dlc = 0xDU;
+    }
+    else if (length <= 48U)
+    {
+        dlc = 0xEU;
+    }
+    else
+    {
+        dlc = 0xFU;
+    }
+    return dlc;
+}
+
+/* Data length code to Message Length */
+static uint8_t MCANDlcToLengthGet(uint8_t dlc)
+{
+    uint8_t msgLength[] = {0U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 12U, 16U, 20U, 24U, 32U, 48U, 64U};
+    return msgLength[dlc];
+}
+
+/*========================================================================
+  Funcion: Save_message
+  Descripcion: Esta función guarda el mensaje recibido por can (por los diferentes buffer o fifo) y lo almacena en variables globales de esta libreria
+  No retorna nada
+  ========================================================================*/
+static void Save_message(uint8_t numberOfMessage, MCAN_RX_BUFFER *rxBuf, uint8_t rxBufLen, uint8_t rxFifoBuf)
+{
+    uint8_t length = 0;                                                         //Variable que contiene el tamaño actual
+    //rx_messageLength = 0;                                                       //Variable para almacenar tamaño del mensaje
+    #ifdef debug
+        if (rxFifoBuf == 0){                                                    //Si el mensaje proviene de la fifo0
+                Uart1_print(" Rx FIFO0 :");
+        }
+        else if (rxFifoBuf == 1){                                               //Si el mensaje proviene de la fifo1
+                Uart1_print(" Rx FIFO1 :");
+        }else if (rxFifoBuf == 2){
+                Uart1_print(" Rx Buffer :");                                    //Si el mensaje proviene del buffer
+        }
+    #endif
+
+    for (uint8_t count = 0; count < numberOfMessage; count++)                   //Recorro todos los mensajes
+    {
+        #ifdef debug
+            Uart1_println(" New Message Received");
+        #endif
+        portENTER_CRITICAL();                                                   //Seccion critica para evitar que se ejecute cambio de contexto alterando el proceso de guardado de la variable
+        rx_messageID = rxBuf->xtd ? rxBuf->id : READ_ID(rxBuf->id);             //Obtengo ID
+        rx_messageLength = MCANDlcToLengthGet(rxBuf->dlc);                      //Obtengo tamaño mensaje
+        length = rx_messageLength;                                              //Valorizo el tamaño actual con el tamaño real del mensaje
+        timestamp=(unsigned int)rxBuf->rxts;                                    //Obtengo el timestamp
+        portEXIT_CRITICAL();                                                    //Salgo de seccion critica
+        #ifdef debug
+            //Uart1_print(" Message - Timestamp : 0x%x ID : 0x%x Length : 0x%x ", (unsigned int)rxBuf->rxts, (unsigned int)rx_messageID, (unsigned int)rx_messageLength);
+            Uart1_print(" Message - Timestamp : 0x");
+            Uart1_print(timestamp);
+            Uart1_print(" ID : 0x");
+            Uart1_print((unsigned int)rx_messageID);
+            Uart1_print(" Length : 0x");
+            Uart1_print((unsigned int)rx_messageLength);
+            Uart1_print("Message : ");
+        #endif
+        uint8_t posicion=0;                                                    //Variable para guardar la posicion actual del array
+        while(length)                                                          //Recorro el array que contiene el mensaje
+        {
+            posicion=rx_messageLength - length--;                              //Posicion actual del array
+            portENTER_CRITICAL();                                                   //Seccion critica para evitar que se ejecute cambio de contexto alterando el proceso de guardado de la variable
+            rx_message[posicion]=rxBuf->data[posicion];                        //Guardo mensaje en variable global
+            portEXIT_CRITICAL();                                                    //Salgo de seccion critica
+            #ifdef debug
+                Uart1_print("0x");
+                Uart1_print(&rxBuf->data[posicion]);
+            #endif
+        }
+        #ifdef debug
+            Uart1_println(" ");
+        #endif
+        rxBuf += rxBufLen;                                                     //Recorro el buffer
     }
 }
 
 
 /*========================================================================
-  Funcion: mcan_fd_interrupt_config
-  Descripcion: Establece la configuraciÃ³n de RAM de mensajes can. Previamente se debe haber llamado a MCAN1_Initialize para la instancia de MCAN asociada.
+  Funcion: APP_MCAN_TxFifoCallback
+  Descripcion: Esta función será llamada por MCAN PLIB cuando se complete la transferencia desde Tx FIFO
   Parametro de entrada:
-                        uint8_t *msgRAMConfigBaseAddress: Puntero a la direcciÃ³n base del bÃºfer asignada a la aplicaciÃ³n. La aplicaciÃ³n debe asignar el bÃºfer desde la memoria contigua no almacenada en cachÃ© y el tamaÃ±o del bÃºfer debe ser MCAN1_MESSAGE_RAM_CONFIG_SIZE
+                        uintptr_t context:
+   No retorna nada
+  ========================================================================*/
+void APP_MCAN_TxFifoCallback(uintptr_t context)
+{
+    xferContext = context;                                              //Valorizo el contexto global
+    status = MCAN1_ErrorGet();                                          //Comprueba el estado de MCAN
+
+    if (((status & MCAN_PSR_LEC_Msk) == MCAN_ERROR_NONE) || ((status & MCAN_PSR_LEC_Msk) == MCAN_ERROR_LEC_NO_CHANGE))   //Si no hay error can o si no hay cambio can
+    {
+        switch ((APP_STATES)context)                                    //Segun el contexto:
+        {
+            case APP_STATE_MCAN_TRANSMIT:                               //Si el contexto del callback es por transmicion de can
+            {
+                state = APP_STATE_MCAN_XFER_SUCCESSFUL;                 //Estado mensaje recibido o transmitido correctamente
+                break;                                                  //Salgo de switch
+            }
+            default:                                                    //En cualquier otro contexto
+                break;                                                  //Salgo de switch
+        }
+    }
+    else                                                                //Sino
+    {
+        state = APP_STATE_MCAN_XFER_ERROR;                              //Estado mensaje recibido o transmitido erroneamente
+    }
+}
+
+/*========================================================================
+  Funcion: APP_MCAN_RxBufferCallback
+  Descripcion: Esta función será llamada por MCAN PLIB cuando se reciba un mensaje en Rx Buffer
+  Parametro de entrada:
+                        uint8_t bufferNumber
+                        uintptr_t context:
+   No retorna nada
+  ========================================================================*/
+void APP_MCAN_RxBufferCallback(uint8_t bufferNumber, uintptr_t context)
+{
+    xferContext = context;                                              //Valorizo el contexto global
+    status = MCAN1_ErrorGet();                                          //Comprueba el estado de MCAN
+
+    if (((status & MCAN_PSR_LEC_Msk) == MCAN_ERROR_NONE) || ((status & MCAN_PSR_LEC_Msk) == MCAN_ERROR_LEC_NO_CHANGE))   //Si no hay error can o si no hay cambio can
+    {
+        switch ((APP_STATES)context)                                    //Segun el contexto:
+        {
+            case APP_STATE_MCAN_RECEIVE:                                //Si el contexto del callback es por recepcion de can
+            {
+                memset(rxBuffer, 0x00, MCAN1_RX_BUFFER_ELEMENT_SIZE);   //memset(void *str, int c, size_t n) copia el caracter c (un caracter sin signo) en los primeros n caracteres de la cadena a la que apunta el argumento str .
+                if (MCAN1_MessageReceive(bufferNumber, (MCAN_RX_BUFFER *)rxBuffer) == true) //Recibe un mensaje por can
+                {                                                       //Si se pudo recibir
+                    Save_message(1, (MCAN_RX_BUFFER *)rxBuffer, MCAN1_RX_BUFFER_ELEMENT_SIZE, 2);  //Imprimo mensaje y almaceno en variable local
+                    state = APP_STATE_MCAN_XFER_SUCCESSFUL;             //Estado mensaje recibido o transmitido correctamente
+                }
+                else                                                    //Si no se pudo recibir
+                {
+                    state = APP_STATE_MCAN_XFER_ERROR;                  //Estado mensaje recibido o transmitido erroneamente
+                }
+                break;                                                  //Salgo del switch
+            }
+            default:                                                    //Si esta en otro estado
+                break;                                                  //Salgo del switch
+        }
+    }
+    else                                                                //Si se produjo un error
+    {
+        state = APP_STATE_MCAN_XFER_ERROR;                              //Estado mensaje recibido o transmitido erroneamente
+    }
+}
+
+/*========================================================================
+  Funcion: APP_MCAN_RxFifo0Callback
+  Descripcion: Esta función será llamada por MCAN PLIB cuando se reciba un mensaje en Rx FIFO0
+  Parametro de entrada:
+                        uint8_t numberOfMessage
+                        uintptr_t context:
+   No retorna nada
+  ========================================================================*/
+void APP_MCAN_RxFifo0Callback(uint8_t numberOfMessage, uintptr_t context)
+{   
+    xferContext = context;                                              //Valorizo el contexto global          
+    status = MCAN1_ErrorGet();                                          //Comprueba el estado de MCAN
+
+    if (((status & MCAN_PSR_LEC_Msk) == MCAN_ERROR_NONE) || ((status & MCAN_PSR_LEC_Msk) == MCAN_ERROR_LEC_NO_CHANGE))   //Si no hay error can o si no hay cambio can
+    {
+        switch ((APP_STATES)context)                                    //Segun el contexto:
+        {
+            case APP_STATE_MCAN_RECEIVE:                                //Si el contexto del callback es por recepcion de can
+            {
+                memset(rxFiFo0, 0x00, (numberOfMessage * MCAN1_RX_FIFO0_ELEMENT_SIZE));    //memset(void *str, int c, size_t n) copia el caracter c (un caracter sin signo) en los primeros n caracteres de la cadena a la que apunta el argumento str .
+                if (MCAN1_MessageReceiveFifo(MCAN_RX_FIFO_0, numberOfMessage, (MCAN_RX_BUFFER *)rxFiFo0) == true) //Recibe un mensaje por can
+                {                                                       //Si se pudo recibir
+                    Save_message(numberOfMessage, (MCAN_RX_BUFFER *)rxFiFo0, MCAN1_RX_FIFO0_ELEMENT_SIZE, 0);    //Imprimo mensaje y almaceno en variable local
+                    state = APP_STATE_MCAN_XFER_SUCCESSFUL;             //Estado mensaje recibido o transmitido correctamente
+                }
+                else                                                    //Si no se pudo recibir
+                {
+                    state = APP_STATE_MCAN_XFER_ERROR;                  //Estado mensaje recibido o transmitido erroneamente
+                }
+                break;                                                  //Salgo del switch
+            }
+            default:                                                    //Si esta en otro estado
+                break;                                                  //Salgo del switch
+        }
+    }
+    else                                                                //Si se produjo un error
+    {
+        state = APP_STATE_MCAN_XFER_ERROR;                              //Estado mensaje recibido o transmitido erroneamente
+    }
+}
+
+/*========================================================================
+  Funcion: APP_MCAN_RxFifo1Callback
+  Descripcion: Esta función será llamada por MCAN PLIB cuando se reciba un mensaje en Rx FIFO1
+  Parametro de entrada:
+                        uint8_t numberOfMessage
+                        uintptr_t context:
+   No retorna nada
+  ========================================================================*/
+void APP_MCAN_RxFifo1Callback(uint8_t numberOfMessage, uintptr_t context)
+{
+    xferContext = context;                                              //Valorizo el contexto global          
+    status = MCAN1_ErrorGet();                                          //Comprueba el estado de MCAN
+
+    if (((status & MCAN_PSR_LEC_Msk) == MCAN_ERROR_NONE) || ((status & MCAN_PSR_LEC_Msk) == MCAN_ERROR_LEC_NO_CHANGE)) //Si no hay error can o si no hay cambio can
+    {
+        switch ((APP_STATES)context)                                    //Segun el contexto:
+        {
+            case APP_STATE_MCAN_RECEIVE:                                //Si el contexto del callback es por recepcion de can
+            {
+                memset(rxFiFo1, 0x00, (numberOfMessage * MCAN1_RX_FIFO1_ELEMENT_SIZE));     //memset(void *str, int c, size_t n) copia el caracter c (un caracter sin signo) en los primeros n caracteres de la cadena a la que apunta el argumento str .
+                if (MCAN1_MessageReceiveFifo(MCAN_RX_FIFO_1, numberOfMessage, (MCAN_RX_BUFFER *)rxFiFo1) == true) //Recibe un mensaje por can
+                {                                                       //Si se pudo recibir
+                    Save_message(numberOfMessage, (MCAN_RX_BUFFER *)rxFiFo1, MCAN1_RX_FIFO1_ELEMENT_SIZE, 1);  //Imprimo mensaje y almaceno en variable local
+                    state = APP_STATE_MCAN_XFER_SUCCESSFUL;             //Estado mensaje recibido o transmitido correctamente
+                }
+                else                                                    //Si no se pudo recibir
+                {
+                    state = APP_STATE_MCAN_XFER_ERROR;                  //Estado mensaje recibido o transmitido erroneamente
+                }   
+                break;                                                  //Salgo del switch
+            }
+            default:                                                    //Si esta en otro estado
+                break;                                                  //Salgo del switch
+        }
+    }
+    else                                                                //Si se produjo un error
+    {
+        state = APP_STATE_MCAN_XFER_ERROR;                              //Estado mensaje recibido o transmitido erroneamente
+    }
+}
+
+
+/*========================================================================
+  Funcion: mcan_fd_interrupt_recibir
+  Descripcion: Recibe mensaje por canbus
+  Parametro de entrada:
+                        uint32_t *rx_messageID:     Puntero de la variable donde se guardara el Id can del mensaje recibido (de 11 bits/29 bits).
+                        uint8_t *rx_message:        Puntero de la variable donde guardar el mensaje
+                        uint8_t *rx_messageLength:  Puntero de la variable donde guardar el tamaÃ±o del mensaje
+  Retorna: dato bool indicando si se pudo transmitir el mensaje true o false.
+  ========================================================================*/
+bool mcan_fd_interrupt_recibir(uint32_t *rx_messageID2, uint8_t *rx_message2, uint8_t *rx_messageLength2){  
+    if(state == APP_STATE_MCAN_XFER_SUCCESSFUL){
+        portENTER_CRITICAL();                                  //Seccion critica para evitar que se ejecute cambio de contexto alterando el proceso de guardado de la variable
+        rx_messageID2=rx_messageID;
+        rx_message2=rx_message;
+        rx_messageLength2=rx_messageLength;
+        portEXIT_CRITICAL();                                   //Salgo de seccion critica
+        return true;                                           //Retorno falso si se recibio mensaje
+    }else{
+        return false;                                          //Retorno falso si no se recibio mensaje
+    }
+}
+
+/*========================================================================
+  Funcion: mcan_fd_interrupt_config
+  Descripcion: Establece la configuracion de RAM de mensajes can. Previamente se debe haber llamado a MCAN1_Initialize para la instancia de MCAN asociada.
+  Parametro de entrada:
+                        uint8_t *msgRAMConfigBaseAddress: Puntero a la direccion base del bufer asignada a la aplicaciÃ³n. La aplicaciÃ³n debe asignar el bÃºfer desde la memoria contigua no almacenada en cachÃ© y el tamaÃ±o del bÃºfer debe ser MCAN1_MESSAGE_RAM_CONFIG_SIZE
                                 Ej: uint8_t Can1MessageRAM[MCAN1_MESSAGE_RAM_CONFIG_SIZE] __attribute__((aligned (32)))__attribute__((space(data), section (".ram_nocache")));
   No retorna nada
   ========================================================================*/
 void mcan_fd_interrupt_config(uint8_t *msgRAMConfigBaseAddress){
     MCAN1_MessageRAMConfigSet(msgRAMConfigBaseAddress);     //Establece configuraciÃ³n de RAM de mensajes
+    MCAN1_RxFifoCallbackRegister(MCAN_RX_FIFO_0, APP_MCAN_RxFifo0Callback, APP_STATE_MCAN_RECEIVE);  //Configuro callback recepcion por fifo0
+    MCAN1_RxFifoCallbackRegister(MCAN_RX_FIFO_1, APP_MCAN_RxFifo1Callback, APP_STATE_MCAN_RECEIVE);  //Configuro callback recepcion por fifo01
+    MCAN1_RxBuffersCallbackRegister(APP_MCAN_RxBufferCallback, APP_STATE_MCAN_RECEIVE);              //Configuro callback recepcion por buffer
 }
 
 
@@ -95,51 +368,42 @@ void mcan_fd_interrupt_config(uint8_t *msgRAMConfigBaseAddress){
                         uint8_t *message:       Puntero del mensaje a enviar
                         uint8_t messageLength:  TamaÃ±o del arreglo a enviar
                         MCAN_MODE MCAN_MODE:    Modo de operacion can
-                                                Mensajes FD (can FD) hata 64 bytes:                   MCAN_MODE_FD_WITH_BRS
-                                                Mensajes estandar normal (can clasico) hasta 8 bytes: MCAN_MODE_NORMAL
-                        MCAN_MSG_ATTR_TX:       Trama de datos o trama remota usando Tx FIFO o Tx Buffer.
-                                                MCAN_MSG_ATTR_TX_FIFO_DATA_FRAME
+                                                Mensajes FD (can FD- alta velocidad) con id estandar:                   MCAN_MODE_FD_STANDARD
+                                                Mensajes FD (can FD- alta velocidad) con id extendido:                  MCAN_MODE_FD_EXTENDED
+                                                Mensajes estandar normal (can clasico) hasta 8 bytes:                   MCAN_MODE_NORMAL
   Retorna: dato bool indicando si se pudo transmitir el mensaje true o false.
+  Nota: los mensajes FD puedene enviar de 0 a 64 bytes, mientras que los menajes normales pueden enviar de 0 a 8 bytes.
   ========================================================================*/
-bool mcan_fd_interrupt_enviar(uint32_t messageID , uint8_t *message, uint8_t messageLength, MCAN_MODE MCAN_MODE_L, MCAN_MSG_TX_ATTRIBUTE MCAN_MSG_ATTR_TX){
-    if (state == APP_STATE_MCAN_USER_INPUT)                                                     //Si se esta esperando al usuario para enviar o recibir mensaje
-        {           
-            MCAN1_TxCallbackRegister( APP_MCAN_Callback, (uintptr_t)APP_STATE_MCAN_TRANSMIT );  //Establece el puntero a la funciÃ³n (y su contexto) que se llamarÃ¡ cuando ocurran los eventos de transferencia del MCAN dado. Previamente se debe haber llamado a MCAN1_Initialize para la instancia de MCAN asociada.
-            state = APP_STATE_MCAN_IDLE;                                                        //Establezco el estado en estado mcan inactivo    
-            bool Resultado = MCAN1_MessageTransmit(messageID, messageLength, message, MCAN_MODE_L, MCAN_MSG_ATTR_TX); //Transmite un mensaje al bus CAN. Previamente se debe haber llamado a MCAN1_Initialize para la instancia de MCAN asociada.
-            return Resultado;                                                                   //Retorno resultado. True si se puedo trasmitir o false si no se puedo transmitir.
+bool mcan_fd_interrupt_enviar(uint32_t messageID , uint8_t *message, uint8_t messageLength, MCAN_MODE MCAN_MODE_L){
+    if (state == APP_STATE_MCAN_USER_INPUT){
+        MCAN_TX_BUFFER *txBuffer = NULL;
+        memset(txFiFo, 0x00, MCAN1_TX_FIFO_BUFFER_ELEMENT_SIZE);
+        txBuffer = (MCAN_TX_BUFFER *)txFiFo;
+        txBuffer->id = WRITE_ID(messageID);
+        txBuffer->dlc = MCANLengthToDlcGet(messageLength);
+        if(MCAN_MODE_L==MCAN_MODE_FD_EXTENDED){                                              //Si es mensaje FD extendido
+        txBuffer->xtd = 1;
         }
-    return false;                                                                              //Retorno falso si no se esperaba al usuario para enviar o recibir mensaje
-}
-
-
-/*========================================================================
-  Funcion: mcan_fd_interrupt_recibir
-  Descripcion: Recibe mensaje por canbus
-  Parametro de entrada:
-                        uint32_t *rx_messageID:     Id can del mensaje recibido (de 11 bits/29 bits).
-                        uint8_t *rx_message:        Puntero de la variable donde guardar el mensaje
-                        uint8_t *rx_messageLength:  Puntero de la variable donde guardar el tamaÃ±o del mensaje
-                        uint16_t *timestamp:        Puntero a la marca de tiempo del mensaje Rx, el valor de la marca de tiempo es 0 si la marca de tiempo estÃ¡ deshabilitada
-                        MCAN_MSG_ATTR_RX:           Trama de datos o trama remota usando Tx FIFO o Tx Buffer. Mensaje para ser leÃ­do desde Rx FIFO0 o Rx FIFO1 o Rx Buffer
-                                                    MCAN_MSG_ATTR_RX_BUFFER
-                                                    MCAN_MSG_ATTR_RX_FIFO0
-                                                    MCAN_MSG_ATTR_RX_FIFO1
-                        msgFrameAttr:               Trama de datos o trama remota a recibir  ej:  MCAN_MSG_RX_DATA_FRAME
-  Retorna: dato bool indicando si se pudo transmitir el mensaje true o false.
-  ========================================================================*/
-bool mcan_fd_interrupt_recibir(uint32_t *rx_messageID, uint8_t *rx_message, uint8_t *rx_messageLength, uint16_t *timestamp, MCAN_MSG_RX_ATTRIBUTE MCAN_MSG_ATTR_RX, MCAN_MSG_RX_FRAME_ATTRIBUTE *msgFrameAttr){  
-    if (state == APP_STATE_MCAN_USER_INPUT)                                                                     //Si se esta esperando al usuario para enviar o recibir mensaje
+        if(MCAN_MODE_L==MCAN_MODE_FD_STANDARD || MCAN_MODE_L==MCAN_MODE_FD_EXTENDED){                   //Si es mensaje FD
+            txBuffer->fdf = 1;
+            txBuffer->brs = 1;
+        }
+        for (uint8_t loop_count = 0; loop_count < messageLength; loop_count++){
+			txBuffer->data[loop_count] = message[loop_count];
+		}
+        MCAN1_TxFifoCallbackRegister( APP_MCAN_TxFifoCallback, (uintptr_t)APP_STATE_MCAN_TRANSMIT );
+        state = APP_STATE_MCAN_IDLE;
+        if (MCAN1_MessageTransmitFifo(1, txBuffer) == false)
         {
-            MCAN1_RxCallbackRegister( APP_MCAN_Callback, (uintptr_t)APP_STATE_MCAN_RECEIVE, MCAN_MSG_ATTR_RX); //Establece el puntero a la funciÃ³n (y su contexto) que se llamarÃ¡ cuando ocurran los eventos de transferencia del MCAN dado. Previamente se debe haber llamado a MCAN1_Initialize para la instancia de MCAN asociada.
-            state = APP_STATE_MCAN_IDLE;                                                                       //Establezco el estado en estado mcan inactivo
-            uint8_t rx_message_size=sizeof(rx_message);                                                        //Obtengo tamaÃ±o del mensaje
-            memset(rx_message, 0x00, rx_message_size);                                                         //memset(void *str, int c, size_t n) copia el carÃ¡cter c (un carÃ¡cter sin signo) en los primeros n caracteres de la cadena a la que apunta el argumento str .
-            bool resultado = MCAN1_MessageReceive(rx_messageID, rx_messageLength, rx_message, timestamp, MCAN_MSG_ATTR_RX, msgFrameAttr); //Recibe un mensaje del bus CAN. Previamente se debe haber llamado a MCAN1_Initialize para la instancia de MCAN asociada.
-            return resultado;                                                                                  //Retorno resultado. True si se puedo recibir o false si no se puedo recibir.
+            return false;       //Retorno falso si no se pudo enviar
         }
-    return false;                                                                                              //Retorno falso si no se esperaba al usuario para enviar o recibir mensaje
+        
+        return true;                                                                              //Retorno verdadero si se pudo enviar
+    }else{
+        return false;       //Retorno falso si no se pudo enviar
+    }
 }
+
 
 /*========================================================================
   Funcion: Resultado
@@ -199,3 +463,4 @@ uint8_t Resultado(void){
 void mcan_fd_interrupt_habilitar(void){
     state = APP_STATE_MCAN_USER_INPUT;
 }
+
