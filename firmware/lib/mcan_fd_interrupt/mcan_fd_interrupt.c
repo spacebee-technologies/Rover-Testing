@@ -189,6 +189,7 @@ void APP_MCAN_TxFifoCallback(uintptr_t context)
                 break;                                                  //Salgo de switch
             }
             default:                                                    //En cualquier otro contexto
+                state = APP_STATE_MCAN_XFER_ERROR;                      //Estado mensaje recibido o transmitido erroneamente
                 break;                                                  //Salgo de switch
         }
     }
@@ -332,7 +333,7 @@ void APP_MCAN_RxFifo1Callback(uint8_t numberOfMessage, uintptr_t context)
   Retorna: dato bool indicando si se pudo transmitir el mensaje true o false.
   ========================================================================*/
 bool mcan_fd_interrupt_recibir(uint32_t *rx_messageID2, uint8_t *rx_message2, uint8_t *rx_messageLength2){  
-    if(state == APP_STATE_MCAN_XFER_SUCCESSFUL){
+    if(state == APP_STATE_MCAN_XFER_SUCCESSFUL && (APP_STATES)xferContext == APP_STATE_MCAN_RECEIVE){
         portENTER_CRITICAL();                                  //Seccion critica para evitar que se ejecute cambio de contexto alterando el proceso de guardado de la variable
         rx_messageID2=rx_messageID;
         rx_message2=rx_message;
@@ -391,7 +392,7 @@ bool mcan_fd_interrupt_enviar(uint32_t messageID , uint8_t *message, uint8_t mes
         for (uint8_t loop_count = 0; loop_count < messageLength; loop_count++){
 			txBuffer->data[loop_count] = message[loop_count];
 		}
-        MCAN1_TxFifoCallbackRegister( APP_MCAN_TxFifoCallback, (uintptr_t)APP_STATE_MCAN_TRANSMIT );
+        MCAN1_TxFifoCallbackRegister(APP_MCAN_TxFifoCallback, (uintptr_t)APP_STATE_MCAN_TRANSMIT);
         state = APP_STATE_MCAN_IDLE;
         if (MCAN1_MessageTransmitFifo(1, txBuffer) == false)
         {
