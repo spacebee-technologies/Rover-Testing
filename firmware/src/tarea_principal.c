@@ -103,7 +103,7 @@ void TAREA_Can1(void *pvParameters ){
   
   Uart1_println ("Inicio tarea 1");
   
-  Enable_testmode(0);
+  //Enable_testmode(0);
   uint8_t EPOS4_id = 1;
 
   //Escribo posicion
