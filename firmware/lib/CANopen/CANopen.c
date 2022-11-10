@@ -179,7 +179,7 @@ uint8_t CANopen_SDO_Expedited_Write(uint8_t node_id, uint8_t command, uint16_t i
                     case CAN_RECEPCION_OK:                        //Si se recibio mensaje                              
                     {
                         //Traigo mensaje desde libreria mcan_fd_interrupt a esta libreria
-                        bool retorno3 = mcan_fd_interrupt_recibir(&rx_messageID, rx_message, &rx_messageLength);
+                        bool retorno3 = mcan_fd_interrupt_recibir(&rx_messageID, &rx_message, &rx_messageLength);
                         if (retorno3 == false)                    //Si ocurrio un error
                         {
                             retornar = 2;                         //Indico que se debe retornar 2

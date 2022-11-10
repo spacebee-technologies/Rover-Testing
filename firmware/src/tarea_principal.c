@@ -109,7 +109,7 @@ void TAREA_Can1(void *pvParameters ){
   //Escribo posicion
   uint8_t pos[3]={0}; pos[0]=0x42; pos[1]=0x13; pos[2]=0x23; pos[3]=0x87;
   if(Epos4_write_target_position(EPOS4_id, pos)==true){Uart1_println("Escritura EPOS4 OK");}else{Uart1_println("Fallo escritura EPOS4");}
-  
+  /*
   //Muestro datos recibidos
   USART1_Write((uint8_t*)"Dato recibidio: ", strlen("Dato recibidio: "));
   char destino[5]="     ";
@@ -118,8 +118,8 @@ void TAREA_Can1(void *pvParameters ){
       USART1_Write((uint8_t*)destino, 5);
   }
   USART1_Write((uint8_t*)"\r\n", strlen("\r\n"));
+  */
   
-  /*
   //Leo posicion actual
   uint8_t pos_actual[3]={0};
   if(Epos4_read_actual_position(EPOS4_id, pos_actual)==true){}else{Uart1_println("\r\nFallo lectura EPOS4");}
@@ -132,7 +132,7 @@ void TAREA_Can1(void *pvParameters ){
       USART1_Write((uint8_t*)destino, 5);
   }
   USART1_Write((uint8_t*)"\r\n", strlen("\r\n"));
-  */
+ 
   
   Uart1_println("Fin tarea can 1");
   if(xTAREA_Can1 != NULL){vTaskDelete(xTAREA_Can1); xTAREA_Can1=NULL;} //Elimino esta tarea
